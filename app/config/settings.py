@@ -23,13 +23,40 @@ MAX_CPU_USAGE = max(1, int(CPU_COUNT * 0.8))  # ใช้ไม่เกิน 8
 
 # การตั้งค่า PyTorch
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MIXED_PRECISION = True  # ใช้ mixed precision training ถ้าเป็นไปได้
+TORCH_COMPILE = True  # ใช้ torch.compile() ถ้าเป็นไปได้
+CUDA_MEMORY_FRACTION = 0.8  # ใช้ GPU memory ไม่เกิน 80%
+
 if DEVICE == "cpu":
     # ถ้าไม่มี GPU ให้ใช้ Intel MKL ถ้ามี
     torch.set_num_threads(MAX_CPU_USAGE)
+elif DEVICE == "cuda":
+    # ตั้งค่า CUDA
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    if CUDA_MEMORY_FRACTION < 1.0:
+        torch.cuda.set_per_process_memory_fraction(CUDA_MEMORY_FRACTION)
 
 # การตั้งค่าโมเดล AI
 MUSICGEN_MODEL_SIZE = "small"  # small, medium, large
 MUSICGEN_MODEL_NAME = f"facebook/musicgen-{MUSICGEN_MODEL_SIZE}"
+
+# การตั้งค่า Model Optimization
+MODEL_QUANTIZATION = "8bit"  # None, "8bit", "4bit"
+MODEL_PRUNING = 0.3  # ตัดพารามิเตอร์ที่มีค่าน้อยออก 30%
+
+# การตั้งค่า Generation
+GENERATION_CONFIG = {
+    "do_sample": True,
+    "guidance_scale": 3.0,
+    "temperature": 0.8,
+    "top_k": 50,
+    "top_p": 0.95,
+    "repetition_penalty": 1.2,
+    "max_new_tokens_per_sec": 50,  # ประมาณ tokens ต่อวินาที
+    "use_cache": True
+}
 
 # ตัวเลือกเครื่องดนตรี (แยกตามประเภท)
 INSTRUMENT_CATEGORIES = {
@@ -59,4 +86,4 @@ AUDIO_FORMAT = "wav"  # wav หรือ mp3
 
 # การตั้งค่าการแคช
 CACHE_SIZE = 10  # จำนวนเพลงล่าสุดที่เก็บในแคช
-MAX_STORAGE_PERCENT = 90  # ลบไฟล์เก่าเมื่อพื้นที่เหลือน้อยกว่า 10% 
+MAX_STORAGE_PERCENT = 90  # ลบไฟล์เก่าเมื่อพื้นที่เหลือน้อยกว่า 10%

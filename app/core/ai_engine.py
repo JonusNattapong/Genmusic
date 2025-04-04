@@ -15,7 +15,8 @@ import multiprocessing
 from app.config.settings import (
     DEVICE, MUSICGEN_MODEL_NAME, MUSICGEN_MODEL_SIZE,
     MAX_DURATION, SAMPLE_RATE, AUDIO_FORMAT,
-    MAX_CPU_USAGE
+    MAX_CPU_USAGE, MIXED_PRECISION, TORCH_COMPILE,
+    MODEL_QUANTIZATION, MODEL_PRUNING, GENERATION_CONFIG
 )
 
 # ใช้ utilities และ managers
@@ -41,7 +42,7 @@ class MusicGenerator:
         )
         
     def load_model(self, callback=None):
-        """โหลดโมเดล MusicGen"""
+        """โหลดโมเดล MusicGen พร้อม optimization"""
         if self.is_loading or self.is_ready:
             logger.warning("โมเดลกำลังโหลดอยู่แล้วหรือพร้อมแล้ว")
             return
@@ -53,6 +54,7 @@ class MusicGenerator:
             try:
                 # ทำ import ภายในฟังก์ชันเพื่อลดเวลาการโหลดตอนเริ่มโปรแกรม
                 from transformers import AutoProcessor, MusicgenForConditionalGeneration
+                from transformers import BitsAndBytesConfig
                 
                 # โหลดโมเดลและ processor
                 start_time = time.time()
@@ -61,20 +63,65 @@ class MusicGenerator:
                 logger.info(f"กำลังโหลด processor จาก {self.model_name}...")
                 self.processor = AutoProcessor.from_pretrained(self.model_name)
                 
+                # ตั้งค่า Quantization
+                quantization_config = None
+                if MODEL_QUANTIZATION == "8bit":
+                    quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+                    logger.info("ใช้ 8-bit quantization")
+                elif MODEL_QUANTIZATION == "4bit":
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_use_double_quant=True,
+                    )
+                    logger.info("ใช้ 4-bit quantization (NF4)")
+                    
+                # ตั้งค่า dtype สำหรับ mixed precision
+                torch_dtype = torch.float16 if MIXED_PRECISION and self.device == "cuda" else torch.float32
+                
                 logger.info(f"กำลังโหลด model จาก {self.model_name}...")
                 self.model = MusicgenForConditionalGeneration.from_pretrained(
                     self.model_name,
-                    torch_dtype=torch.float32
+                    torch_dtype=torch_dtype,
+                    quantization_config=quantization_config,
+                    # device_map="auto" # อาจจะใช้แทน .to(device) แต่ต้องทดสอบ
                 )
                 
-                # ย้ายโมเดลไปยัง device ที่เหมาะสม
-                self.model.to(self.device)
+                # ย้ายโมเดลไปยัง device ที่เหมาะสม (ถ้าไม่ได้ใช้ device_map)
+                if not hasattr(self.model, 'hf_device_map'):
+                    self.model.to(self.device)
+                    
+                # Model Pruning (ตัวอย่าง - อาจต้องปรับปรุง)
+                if MODEL_PRUNING > 0:
+                    try:
+                        from torch.nn.utils import prune
+                        parameters_to_prune = []
+                        for module in self.model.modules():
+                            if isinstance(module, torch.nn.Linear):
+                                parameters_to_prune.append((module, 'weight'))
+                        
+                        if parameters_to_prune:
+                            prune.global_unstructured(
+                                parameters_to_prune,
+                                pruning_method=prune.L1Unstructured,
+                                amount=MODEL_PRUNING,
+                            )
+                            logger.info(f"ทำการ Pruning โมเดล {MODEL_PRUNING*100}%")
+                            # ทำให้ pruning มีผลถาวร (อาจไม่จำเป็น)
+                            # for module, name in parameters_to_prune:
+                            #     prune.remove(module, name)
+                        else:
+                            logger.warning("ไม่พบ layers ที่จะทำการ pruning")
+                            
+                    except Exception as e:
+                        logger.warning(f"ไม่สามารถทำการ pruning ได้: {e}")
                 
-                # ถ้าใช้ CPU ปรับใช้ torch.compile ถ้ามี PyTorch 2.0+
-                if self.device == "cpu" and hasattr(torch, 'compile'):
+                # ใช้ torch.compile ถ้าเปิดใช้งานและมี PyTorch 2.0+
+                if TORCH_COMPILE and self.device == "cuda" and hasattr(torch, 'compile'):
                     try:
                         logger.info("กำลังใช้ torch.compile เพื่อเพิ่มความเร็ว...")
-                        self.model = torch.compile(self.model)
+                        self.model = torch.compile(self.model, mode="reduce-overhead")
                     except Exception as e:
                         logger.warning(f"ไม่สามารถใช้ torch.compile ได้: {e}")
                 
@@ -184,15 +231,32 @@ class MusicGenerator:
         
         # สร้าง future สำหรับแต่ละงาน
         for task in tasks:
-            task['use_cache'] = use_cache
+            task_params = task.copy() # สร้าง copy เพื่อไม่ให้กระทบ task เดิม
+            task_params['use_cache'] = use_cache
+            
+            # ตรวจสอบ cache ก่อนส่งงาน
+            if use_cache:
+                cached_result = cache_manager.get(task_params)
+                if cached_result:
+                    logger.info(f"ใช้ผลลัพธ์จาก cache สำหรับงาน batch: {task_params['prompt']}")
+                    results.append({
+                        'task': task,
+                        'success': True,
+                        'result': cached_result,
+                    })
+                    if status_callback:
+                        status_callback(len(results), 0, len(tasks)) # อัพเดตสถานะทันที
+                    continue # ไปงานถัดไป
+
+            # ถ้าไม่มี cache ให้ส่งงานไปสร้าง
             future = self.thread_pool.submit(
                 self._generate_music,
-                **task
+                **task_params
             )
             futures.append((future, task))
         
         # รอผลลัพธ์และอัพเดตสถานะ
-        completed = 0
+        completed = len(results) # นับจาก cache
         failed = 0
         total = len(tasks)
         
@@ -229,7 +293,9 @@ class MusicGenerator:
                        prompt: str, 
                        duration: int,
                        instruments: List[str],
-                       mood: str) -> Dict[str, Any]:
+                       mood: str,
+                       use_cache: bool = True # เพิ่ม parameter นี้แต่ไม่ได้ใช้โดยตรงในฟังก์ชันนี้
+                       ) -> Dict[str, Any]:
         """สร้างเพลงตามพารามิเตอร์ที่กำหนด
         คืนค่า dictionary ที่มีข้อมูลเพลงและ metadata"""
         
@@ -242,8 +308,6 @@ class MusicGenerator:
         
         # ตรวจสอบและปรับความยาว
         max_seconds = min(duration, MAX_DURATION)
-        # MusicGen ใช้หน่วยเป็นวินาที
-        max_seconds_tensor = torch.tensor([max_seconds])
         
         # สร้าง inputs จาก prompt
         inputs = self.processor(
@@ -252,15 +316,13 @@ class MusicGenerator:
             return_tensors="pt",
         )
         
-        # กำหนด generation parameters
-        generation_kwargs = {
-            "do_sample": True,
-            "guidance_scale": 3.0,
-            "max_new_tokens": max_seconds * 50,  # ประมาณ 50 tokens ต่อวินาที
-        }
+        # กำหนด generation parameters จาก settings
+        generation_kwargs = GENERATION_CONFIG.copy()
+        generation_kwargs["max_new_tokens"] = max_seconds * generation_kwargs.pop("max_new_tokens_per_sec", 50)
         
         # สร้างเพลง
-        with torch.no_grad():
+        context = torch.autocast(device_type=self.device, dtype=torch.float16) if MIXED_PRECISION and self.device == "cuda" else torch.no_grad()
+        with context:
             audio_values = self.model.generate(
                 **inputs.to(self.device),
                 **generation_kwargs
@@ -286,7 +348,8 @@ class MusicGenerator:
             "sample_rate": SAMPLE_RATE,
             "generation_time": generation_time,
             "model": self.model_name,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "generation_config": generation_kwargs # เพิ่ม config ที่ใช้
         }
         
         # คืนค่าทั้งข้อมูลเสียงและ metadata

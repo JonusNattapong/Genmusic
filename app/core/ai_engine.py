@@ -8,15 +8,19 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from threading import Thread
 from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
-# ดึงการตั้งค่าจาก settings
+# ดึงการตั้งค่าและ managers
 from app.config.settings import (
     DEVICE, MUSICGEN_MODEL_NAME, MUSICGEN_MODEL_SIZE,
-    MAX_DURATION, SAMPLE_RATE, AUDIO_FORMAT
+    MAX_DURATION, SAMPLE_RATE, AUDIO_FORMAT,
+    MAX_CPU_USAGE
 )
 
-# ใช้ utilities
+# ใช้ utilities และ managers
 from app.core.utilities import logger, clean_old_files
+from app.core.cache_manager import cache_manager
 
 class MusicGenerator:
     """คลาสสำหรับการจัดการโมเดล AI สำหรับสร้างเพลง"""
@@ -30,6 +34,11 @@ class MusicGenerator:
         self.progress_callback = None
         self._generation_queue = Queue()
         self._processing_thread = None
+        
+        # ThreadPool สำหรับ batch processing
+        self.thread_pool = ThreadPoolExecutor(
+            max_workers=min(MAX_CPU_USAGE, multiprocessing.cpu_count())
+        )
         
     def load_model(self, callback=None):
         """โหลดโมเดล MusicGen"""
@@ -97,10 +106,26 @@ class MusicGenerator:
                 if not self._generation_queue.empty():
                     # ดึงข้อมูลจากคิว
                     params, result_callback = self._generation_queue.get()
+                    use_cache = params.pop('use_cache', True)
+                    
+                    # ตรวจสอบ cache ก่อน
+                    if use_cache:
+                        cached_result = cache_manager.get(params)
+                        if cached_result:
+                            logger.info("ใช้ผลลัพธ์จาก cache")
+                            if result_callback:
+                                result_callback(True, cached_result)
+                            self._generation_queue.task_done()
+                            continue
                     
                     # สร้างเพลง
                     try:
                         result = self._generate_music(**params)
+                        
+                        # เก็บลง cache
+                        if use_cache:
+                            cache_manager.set(params, result)
+                            
                         if result_callback:
                             result_callback(True, result)
                     except Exception as e:
@@ -123,11 +148,12 @@ class MusicGenerator:
         self._processing_thread.start()
     
     def queue_music_generation(self, 
-                              prompt: str, 
-                              duration: int,
-                              instruments: List[str],
-                              mood: str,
-                              result_callback=None):
+                             prompt: str, 
+                             duration: int,
+                             instruments: List[str],
+                             mood: str,
+                             result_callback=None,
+                             use_cache: bool = True) -> bool:
         """เพิ่มคำขอการสร้างเพลงเข้าคิว"""
         if not self.is_ready:
             if result_callback:
@@ -139,13 +165,65 @@ class MusicGenerator:
             "prompt": prompt,
             "duration": duration,
             "instruments": instruments,
-            "mood": mood
+            "mood": mood,
+            "use_cache": use_cache
         }
         
         # เพิ่มเข้าคิว
         self._generation_queue.put((params, result_callback))
         logger.info(f"เพิ่มคำขอการสร้างเพลงเข้าคิว: {prompt}")
         return True
+        
+    def generate_batch(self,
+                      tasks: List[Dict[str, Any]],
+                      status_callback=None,
+                      use_cache: bool = True) -> List[Dict[str, Any]]:
+        """สร้างเพลงหลายเพลงพร้อมกันโดยใช้ ThreadPool"""
+        results = []
+        futures = []
+        
+        # สร้าง future สำหรับแต่ละงาน
+        for task in tasks:
+            task['use_cache'] = use_cache
+            future = self.thread_pool.submit(
+                self._generate_music,
+                **task
+            )
+            futures.append((future, task))
+        
+        # รอผลลัพธ์และอัพเดตสถานะ
+        completed = 0
+        failed = 0
+        total = len(tasks)
+        
+        for future, task in futures:
+            try:
+                result = future.result()
+                results.append({
+                    'task': task,
+                    'success': True,
+                    'result': result,
+                })
+                completed += 1
+                
+                # เก็บลง cache
+                if use_cache:
+                    cache_manager.set(task, result)
+                    
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการสร้างเพลง {task['prompt']}: {e}")
+                results.append({
+                    'task': task,
+                    'success': False,
+                    'error': str(e)
+                })
+                failed += 1
+                
+            # เรียก callback
+            if status_callback:
+                status_callback(completed, failed, total)
+                
+        return results
     
     def _generate_music(self, 
                        prompt: str, 
@@ -267,12 +345,13 @@ def load_ai_model(callback=None):
     """ฟังก์ชันสะดวกสำหรับโหลดโมเดล AI"""
     music_generator.load_model(callback)
     
-def generate_music(prompt, duration, instruments, mood, callback=None):
+def generate_music(prompt, duration, instruments, mood, callback=None, use_cache=True):
     """ฟังก์ชันสะดวกสำหรับสร้างเพลง"""
     return music_generator.queue_music_generation(
         prompt=prompt,
         duration=duration,
         instruments=instruments,
         mood=mood,
-        result_callback=callback
-    ) 
+        result_callback=callback,
+        use_cache=use_cache
+    )

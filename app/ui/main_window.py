@@ -104,6 +104,21 @@ class MainWindow(QMainWindow):
         new_action.setShortcut("Ctrl+N")
         new_action.triggered.connect(self._focus_music_gen_form)
         
+        # จัดการ Presets
+        manage_presets_action = QAction("จัดการ Presets", self)
+        manage_presets_action.setShortcut("Ctrl+P")
+        manage_presets_action.triggered.connect(self._show_preset_manager)
+        
+        # สร้างเพลงแบบ Batch
+        batch_generate_action = QAction("สร้างเพลงแบบ Batch", self)
+        batch_generate_action.setShortcut("Ctrl+B")
+        batch_generate_action.triggered.connect(self._show_batch_generator)
+        
+        # แต่งเพลงแบบมีส่วนร่วม
+        interactive_action = QAction("แต่งเพลงแบบมีส่วนร่วม", self)
+        interactive_action.setShortcut("Ctrl+I")
+        interactive_action.triggered.connect(self._show_interactive_generator)
+        
         # ส่งออกเพลง
         export_action = QAction("ส่งออกเพลง", self)
         export_action.setShortcut("Ctrl+E")
@@ -115,6 +130,10 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         
         file_menu.addAction(new_action)
+        file_menu.addAction(manage_presets_action)
+        file_menu.addAction(batch_generate_action)
+        file_menu.addAction(interactive_action)
+        file_menu.addSeparator()
         file_menu.addAction(export_action)
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
@@ -147,6 +166,23 @@ class MainWindow(QMainWindow):
         new_music_action = QAction("🎵 สร้างเพลง", self)
         new_music_action.triggered.connect(self._focus_music_gen_form)
         toolbar.addAction(new_music_action)
+        
+        # ปุ่มจัดการ Presets
+        presets_action = QAction("⚙️ Presets", self)
+        presets_action.triggered.connect(self._show_preset_manager)
+        toolbar.addAction(presets_action)
+        
+        # ปุ่มสร้างเพลงแบบ Batch 
+        batch_action = QAction("📑 Batch", self)
+        batch_action.triggered.connect(self._show_batch_generator)
+        toolbar.addAction(batch_action)
+        
+        # ปุ่มแต่งเพลงแบบมีส่วนร่วม
+        interactive_action = QAction("🎹 Interactive", self)
+        interactive_action.triggered.connect(self._show_interactive_generator)
+        toolbar.addAction(interactive_action)
+        
+        toolbar.addSeparator()
         
         # ปุ่มรายการเพลง
         playlist_action = QAction("🎶 รายการเพลง", self)
@@ -316,6 +352,35 @@ class MainWindow(QMainWindow):
         # ปลดล็อคฟอร์ม
         self.music_gen_form.unlock_form()
         
+    def _show_preset_manager(self):
+        """แสดงหน้าจัดการ presets"""
+        from app.ui.components.preset_manager_dialog import PresetManagerDialog
+        dialog = PresetManagerDialog(self)
+        dialog.preset_selected.connect(self._on_preset_selected)
+        dialog.exec()
+        
+    def _show_batch_generator(self):
+        """แสดงหน้าสร้างเพลงแบบ batch"""
+        from app.ui.components.batch_generator_dialog import BatchGeneratorDialog
+        dialog = BatchGeneratorDialog(self)
+        dialog.exec()
+        
+    def _show_interactive_generator(self):
+        """แสดงหน้าแต่งเพลงแบบมีส่วนร่วม"""
+        from app.ui.components.interactive_generator_dialog import InteractiveGeneratorDialog
+        dialog = InteractiveGeneratorDialog(self)
+        dialog.exec()
+        
+    def _on_preset_selected(self, preset):
+        """เรียกเมื่อเลือก preset จากหน้าจัดการ presets"""
+        # ใส่ข้อมูลจาก preset ลงในฟอร์ม
+        self.music_gen_form.set_form_data(
+            prompt=preset['prompt'],
+            instruments=preset['instruments'],
+            mood=preset['mood'],
+            duration=preset['duration']
+        )
+        
     def _show_about_dialog(self):
         """แสดงไดอะล็อกเกี่ยวกับโปรแกรม"""
         QMessageBox.about(
@@ -347,4 +412,4 @@ class MainWindow(QMainWindow):
             logger.info("ปิดโปรแกรม")
             event.accept()
         else:
-            event.ignore() 
+            event.ignore()

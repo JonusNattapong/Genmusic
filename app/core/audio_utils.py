@@ -3,7 +3,9 @@ import time
 import numpy as np
 import soundfile as sf
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Union, Literal
+import librosa
+import soundfile as sf
 
 # ดึงการตั้งค่าจาก settings
 from app.config.settings import (
@@ -174,4 +176,44 @@ def get_all_audio_files(sort_by='date', reverse=True) -> list:
     
 def delete_audio_file(file_path: Path) -> bool:
     """ลบไฟล์เสียง"""
-    return audio_manager.delete_file(file_path) 
+    return audio_manager.delete_file(file_path)
+
+def export_audio(input_path: Union[str, Path], 
+                output_format: Literal['wav', 'mp3', 'ogg', 'flac'],
+                output_path: Optional[Union[str, Path]] = None,
+                sample_rate: Optional[int] = None) -> Path:
+    """แปลงไฟล์เสียงไปเป็นฟอร์แมตอื่น
+    
+    Args:
+        input_path: Path ของไฟล์ต้นฉบับ
+        output_format: ฟอร์แมตที่ต้องการแปลง ('wav', 'mp3', 'ogg', 'flac')  
+        output_path: Path ที่ต้องการบันทึก (ถ้าไม่ระบุจะใช้ชื่อไฟล์เดิมแต่เปลี่ยนนามสกุล)
+        sample_rate: sample rate ที่ต้องการ (ถ้าไม่ระบุจะใช้ค่าเดิม)
+    
+    Returns:
+        Path ของไฟล์ที่แปลงแล้ว
+    """
+    # แปลง path เป็น Path object
+    input_path = Path(input_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"ไม่พบไฟล์ {input_path}")
+        
+    # สร้าง output path ถ้าไม่ได้ระบุ
+    if output_path is None:
+        output_path = input_path.with_suffix(f".{output_format}")
+    else:
+        output_path = Path(output_path)
+        
+    # โหลดไฟล์เสียง
+    logger.info(f"กำลังโหลดไฟล์ {input_path}")
+    audio_data, sr = librosa.load(input_path, sr=sample_rate)
+    
+    # บันทึกในฟอร์แมตที่ต้องการ
+    logger.info(f"กำลังบันทึกไฟล์ {output_path}")
+    sf.write(
+        file=output_path,
+        data=audio_data,
+        samplerate=sr if sample_rate is None else sample_rate
+    )
+    
+    return output_path

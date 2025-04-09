@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import psutil
 import shutil
@@ -10,17 +11,24 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from app.config.settings import OUTPUT_DIR, MAX_STORAGE_PERCENT, SAMPLE_RATE
 
+# ตั้งค่า stdout เป็น UTF-8
+sys.stdout.reconfigure(encoding='utf-8')
+
 # ตั้งค่า logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(OUTPUT_DIR.parent / "genmusic.log")
-    ]
+        logging.StreamHandler(sys.stdout),  # กำหนด stream เป็น stdout
+        logging.FileHandler(OUTPUT_DIR.parent / "genmusic.log", encoding='utf-8')  # กำหนด encoding
+    ],
+    force=True  # บังคับใช้การตั้งค่าใหม่
 )
-logger = logging.getLogger(__name__)
 
+# ตั้งค่า stdout เป็น UTF-8
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+logger = logging.getLogger(__name__)
 def get_system_info() -> Dict[str, Any]:
     """รวบรวมข้อมูลระบบเพื่อแสดงในโปรแกรม"""
     info = {
@@ -115,10 +123,17 @@ def estimate_generation_time(duration: int, instruments_count: int) -> int:
     """ประมาณเวลาที่ใช้ในการสร้างเพลง (ในหน่วยวินาที)
     ค่าที่ได้เป็นการประมาณคร่าวๆ ขึ้นอยู่กับเครื่องที่ใช้"""
     # ค่าประมาณพื้นฐาน
-    base_time = 10  # วินาที
+    base_time = 30  # วินาที
     
-    # เพิ่มเวลาตามความยาวเพลง (ประมาณการคร่าวๆ)
-    time_per_second = 0.3  # การสร้างเพลง 1 วินาทีใช้เวลาประมาณ 0.3 วินาที
+    # อัตราการสร้างปรับตามความยาว
+    if duration <= 300:  # <=5 นาที
+        time_per_second = 0.3
+    elif duration <= 1800:  # <=30 นาที
+        time_per_second = 0.4
+    elif duration <= 3600:  # <=1 ชั่วโมง
+        time_per_second = 0.5
+    else:  # >1 ชั่วโมง
+        time_per_second = 0.6
     
     # เพิ่มเวลาตามจำนวนเครื่องดนตรี
     instrument_factor = 1 + (instruments_count * 0.2)  # เครื่องดนตรีแต่ละชิ้นทำให้การสร้างช้าลง 20%
@@ -126,4 +141,9 @@ def estimate_generation_time(duration: int, instruments_count: int) -> int:
     # คำนวณเวลารวม
     estimated_time = base_time + (duration * time_per_second * instrument_factor)
     
-    return max(5, int(estimated_time))  # อย่างน้อย 5 วินาที 
+    # เพิ่มเวลาสำรองสำหรับเพลงยาว
+    if duration > 3600:
+        overhead_factor = duration / 3600  # เพิ่มตามจำนวนชั่วโมง
+        estimated_time *= (1 + (overhead_factor * 0.2))  # เพิ่ม 20% ต่อชั่วโมง
+    
+    return max(30, int(estimated_time))  # อย่างน้อย 30 วินาที

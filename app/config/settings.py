@@ -43,7 +43,7 @@ MUSICGEN_MODEL_SIZE = "small"  # small, medium, large
 MUSICGEN_MODEL_NAME = f"facebook/musicgen-{MUSICGEN_MODEL_SIZE}"
 
 # การตั้งค่า Model Optimization
-MODEL_QUANTIZATION = "8bit"  # None, "8bit", "4bit"
+MODEL_QUANTIZATION = None  # None, "8bit", "4bit" - ใช้ quantization เมื่อมี GPU เท่านั้น
 MODEL_PRUNING = 0.3  # ตัดพารามิเตอร์ที่มีค่าน้อยออก 30%
 
 # การตั้งค่า Generation
@@ -77,8 +77,18 @@ MOODS = [
 ]
 
 # ตัวเลือกความยาวเพลง (วินาที)
-DURATION_PRESETS = [30, 60, 120, 180, 300]  # 30 วินาที ถึง 5 นาที
-MAX_DURATION = 300  # สูงสุด 5 นาที
+DURATION_PRESETS = [
+    60,  # 1 นาที
+    300,  # 5 นาที
+    900,  # 15 นาที
+    1800,  # 30 นาที
+    3600,  # 1 ชั่วโมง
+    7200,  # 2 ชั่วโมง
+    10800,  # 3 ชั่วโมง
+    14400,  # 4 ชั่วโมง
+    18000,  # 5 ชั่วโมง
+]
+MAX_DURATION = 18000  # สูงสุด 5 ชั่วโมง
 
 # การตั้งค่า Audio
 SAMPLE_RATE = 44100  # Hz

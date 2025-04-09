@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QLineEdit, QMessageBox,
     QFormLayout, QComboBox, QSpinBox, QTextEdit,
-    QTabWidget, QWidget, QProgressBar, QSlider
+    QTabWidget, QWidget, QProgressBar, QSlider, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon

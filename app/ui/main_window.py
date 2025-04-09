@@ -2,7 +2,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from PyQt6.QtCore import Qt, QSize, pyqtSlot
+from PyQt6.QtCore import Qt, QSize, pyqtSlot, pyqtSignal
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QStatusBar, QProgressBar, 
@@ -238,6 +238,9 @@ class MainWindow(QMainWindow):
         self.music_player.setFocus()
         self.music_player.playlist.setFocus()
         
+    # Signal สำหรับการโหลดโมเดล
+    model_loaded_signal = pyqtSignal(bool)
+    
     def _load_ai_model(self):
         """โหลดโมเดล AI"""
         # อัพเดตสถานะ
@@ -246,11 +249,15 @@ class MainWindow(QMainWindow):
         self.model_loaded = False
         self.music_gen_form.setEnabled(False)
         
-        # โหลดโมเดล
-        load_ai_model(self._on_model_loaded)
+        # เชื่อมต่อ signal กับ slot
+        self.model_loaded_signal.connect(self._on_model_loaded)
         
+        # โหลดโมเดลโดยส่ง signal callback
+        load_ai_model(lambda success: self.model_loaded_signal.emit(success))
+        
+    @pyqtSlot(bool)
     def _on_model_loaded(self, success):
-        """เรียกเมื่อโหลดโมเดลเสร็จ"""
+        """เรียกเมื่อโหลดโมเดลเสร็จ (เรียกใน UI thread)"""
         if success:
             self.model_status_label.setText("โมเดล AI: พร้อมใช้งาน")
             self.status_label.setText("พร้อมใช้งาน")
